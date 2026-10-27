@@ -13,7 +13,9 @@
     "start": "NODE_ENV=production node server/index.js",
     "test": "node --test tests/*.test.js",
     "import": "node server/import-cli.js",
-    "test:browser": "node scripts/browser-smoke.mjs"
+    "test:browser": "node scripts/browser-smoke.mjs",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
   },
   "dependencies": {
     "@fontsource/dm-sans": "^5.3.0",
@@ -32,6 +34,7 @@
   "devDependencies": {
     "@playwright/test": "^1.56.1",
     "@vitejs/plugin-react": "^5.1.0",
+    "prettier": "^3.9.10",
     "vite": "^7.2.0"
   },
   "overrides": {
