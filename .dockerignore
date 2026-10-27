@@ -1,0 +1,12 @@
+.git
+node_modules
+dist
+data
+.env
+.env.*
+attachments
+*.xlsx
+*.xls
+*.csv
+test-results
+playwright-report

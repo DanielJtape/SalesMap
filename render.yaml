@@ -1,0 +1,26 @@
+services:
+  - type: web
+    name: salesmap
+    runtime: node
+    plan: starter
+    buildCommand: npm ci && npm run build
+    startCommand: npm start
+    healthCheckPath: /api/health
+    autoDeployTrigger: off
+    envVars:
+      - key: NODE_VERSION
+        value: 24.19.0
+      - key: NODE_ENV
+        value: production
+      - key: DATA_DIR
+        value: /var/data/salesmap
+      - key: TRUST_PROXY
+        value: "1"
+      - key: SALES_MAP_PASSWORD
+        sync: false
+      - key: OPENCAGE_API_KEY
+        sync: false
+    disk:
+      name: salesmap-data
+      mountPath: /var/data
+      sizeGB: 1
