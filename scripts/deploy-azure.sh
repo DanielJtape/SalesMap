@@ -24,15 +24,37 @@ fi
 for tool in az node npm python3 zip; do command -v "$tool" >/dev/null || { echo "Install $tool first." >&2; exit 1; }; done
 node -e "if(Number(process.versions.node.split('.')[0])<24)throw Error('Node 24 or later is required')"
 cd "$(dirname "$0")/.."
+echo '[1/6] Checking Azure sign-in and selecting your subscription…'
 az account show --output none
 az account set --subscription "$subscription"
+echo '[2/6] Checking Node 24 availability in Azure…'
 if ! az webapp list-runtimes --os linux --output tsv | grep -qi 'NODE[:|]24'; then
   echo 'This Azure region/runtime configuration must support Node 24. Verify runtime availability before deploying.' >&2
   exit 1
 fi
-for provider in Microsoft.Web Microsoft.DBforPostgreSQL Microsoft.Network Microsoft.Maps; do
-  az provider register --namespace "$provider" --wait --output none
+echo '[3/6] Registering Azure services. First-time registration can take several minutes.'
+providers=(Microsoft.Web Microsoft.DBforPostgreSQL Microsoft.Network Microsoft.Maps)
+for provider in "${providers[@]}"; do
+  state=$(az provider show --namespace "$provider" --query registrationState -o tsv)
+  if [[ "$state" != Registered ]]; then
+    printf '  Requesting registration: %s…\n' "$provider"
+    az provider register --namespace "$provider" --output none
+  fi
 done
+for provider in "${providers[@]}"; do
+  deadline=$((SECONDS+900))
+  while true; do
+    state=$(az provider show --namespace "$provider" --query registrationState -o tsv)
+    printf '  %s: %s\n' "$provider" "$state"
+    if [[ "$state" == Registered ]]; then break; fi
+    if (( SECONDS >= deadline )); then
+      printf 'Registration is still pending for %s. Rerun this command later; existing registrations will be reused.\n' "$provider" >&2
+      exit 1
+    fi
+    sleep 10
+  done
+done
+echo '[4/6] Services registered. Choose the SalesMap administrator password below.'
 umask 077
 stage=$(mktemp -d)
 trap 'rm -rf "$stage"' EXIT
@@ -49,13 +71,16 @@ params={'appName':sys.argv[2],'location':sys.argv[3],'adminPassword':(root/'admi
 (root/'parameters.json').write_text(json.dumps({'parameters':{key:{'value':value} for key,value in params.items()}}))
 (root/'admin-password').unlink()
 PY
+echo '[5/6] Preparing the resource group and validating the template…'
 az group create --name "$resource_group" --location "$location" --output none
 az deployment group validate --resource-group "$resource_group" --template-file infra/azure/main.json --parameters "@$stage/parameters.json" --output none
 if [[ "$apply" != true ]]; then
+  echo '[6/6] Checking proposed changes. This can take several minutes…'
   az deployment group what-if --resource-group "$resource_group" --template-file infra/azure/main.json --parameters "@$stage/parameters.json" --no-pretty-print --query "changes[].{resource:resourceId,change:changeType}" --output table
   echo 'Validation complete. The resource group was created; billable services were not deployed. Review Azure pricing, then rerun with --apply.'
   exit 0
 fi
+echo '[6/6] Building and deploying the application…'
 npm ci --no-audit --no-fund
 npm test
 npm run build
