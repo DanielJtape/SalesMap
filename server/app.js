@@ -12,21 +12,24 @@ import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { readWorkbook } from "./importer.js";
 import { openStore } from "./store.js";
+import { mapsRouter, azureGeocode } from "./maps.js";
 
 export function createApp({
   dataDir = "./data",
   password = "",
   production = false,
   geocodingKey = "",
+  mapsKey = "",
   trustProxy = false,
   fetcher = fetch,
+  storage = null,
 } = {}) {
   if (production && password.length < 12)
     throw new Error(
       "Set SALES_MAP_PASSWORD to at least 12 characters before publishing.",
     );
   const app = express(),
-    store = openStore(dataDir),
+    store = storage || openStore(dataDir),
     sessions = new Map();
   if (trustProxy) app.set("trust proxy", 1);
   app.disable("x-powered-by");
@@ -70,7 +73,7 @@ export function createApp({
       .map((c) => c.trim())
       .find((c) => c.startsWith("salesmap_session="))
       ?.slice(17);
-  const identity = (req) => {
+  const identity = async (req) => {
     if (!password) return { role: "admin", email: "Local administrator" };
     const token = cookieToken(req),
       session = sessions.get(token);
@@ -78,9 +81,9 @@ export function createApp({
       session &&
       session.expires > Date.now() &&
       (session.role === "admin" ||
-        store.db
+        (await store.db
           .prepare("SELECT email FROM users WHERE email=?")
-          .get(session.email))
+          .get(session.email)))
     )
       return session;
     if (token) sessions.delete(token);
@@ -104,13 +107,10 @@ export function createApp({
     });
     res.json({ ok: true });
   }
-  app.get("/api/session", (req, res) =>
-    res.json({
-      authenticated: !!identity(req),
-      user: identity(req),
-      authRequired: !!password,
-    }),
-  );
+  app.get("/api/session", async (req, res) => {
+    const user = await identity(req);
+    res.json({ authenticated: !!user, user, authRequired: !!password });
+  });
   const loginLimit = rateLimit({
     windowMs: 15 * 60 * 1000,
     limit: 15,
@@ -118,7 +118,7 @@ export function createApp({
     legacyHeaders: false,
   });
   const adminHash = scryptSync(password, "salesmap-password-check", 32);
-  app.post("/api/login", loginLimit, (req, res) => {
+  app.post("/api/login", loginLimit, async (req, res) => {
     const input = req.body?.password,
       email = String(req.body?.email || "")
         .trim()
@@ -126,7 +126,7 @@ export function createApp({
     if (typeof input !== "string" || input.length > 1024)
       return res.status(401).json({ error: "Incorrect email or password." });
     const user = email
-      ? store.db.prepare("SELECT * FROM users WHERE email=?").get(email)
+      ? await store.db.prepare("SELECT * FROM users WHERE email=?").get(email)
       : null;
     const hash = user ? Buffer.from(user.hash, "hex") : adminHash;
     const valid = timingSafeEqual(
@@ -137,7 +137,7 @@ export function createApp({
       return res.status(401).json({ error: "Incorrect email or password." });
     signIn(res, user?.email || "Administrator", user ? "viewer" : "admin");
   });
-  app.post("/api/accept-invite", loginLimit, (req, res) => {
+  app.post("/api/accept-invite", loginLimit, async (req, res) => {
     const token = String(req.body?.token || ""),
       newPassword = req.body?.password;
     if (
@@ -149,7 +149,7 @@ export function createApp({
         .status(400)
         .json({ error: "Use a password of at least 12 characters." });
     const hash = createHash("sha256").update(token).digest("hex");
-    const invite = store.db
+    const invite = await store.db
       .prepare("SELECT * FROM invitations WHERE token_hash=? AND expires>?")
       .get(hash, Date.now());
     if (!invite)
@@ -158,7 +158,7 @@ export function createApp({
           "This invitation is invalid or has expired. Ask your administrator for a new link.",
       });
     if (
-      store.db
+      await store.db
         .prepare("SELECT email FROM users WHERE email=?")
         .get(invite.email)
     )
@@ -167,14 +167,16 @@ export function createApp({
           "This account is already registered. Sign in with your password.",
       });
     const salt = randomBytes(16).toString("hex");
-    store.db
+    await store.db
       .prepare("INSERT INTO users(email,hash,salt) VALUES(?,?,?)")
       .run(
         invite.email,
         scryptSync(newPassword, salt, 32).toString("hex"),
         salt,
       );
-    store.db.prepare("DELETE FROM invitations WHERE email=?").run(invite.email);
+    await store.db
+      .prepare("DELETE FROM invitations WHERE email=?")
+      .run(invite.email);
     signIn(res, invite.email, "viewer");
   });
   app.post("/api/logout", (req, res) => {
@@ -182,8 +184,8 @@ export function createApp({
     res.clearCookie("salesmap_session");
     res.json({ ok: true });
   });
-  app.use("/api", (req, res, next) => {
-    req.user = identity(req);
+  app.use("/api", async (req, res, next) => {
+    req.user = await identity(req);
     if (!req.user)
       return res.status(401).json({ error: "Sign in to view account data." });
     if (!["GET", "HEAD"].includes(req.method) && req.user.role !== "admin")
@@ -196,28 +198,32 @@ export function createApp({
     req.user.role === "admin"
       ? next()
       : res.status(403).json({ error: "Administrator access required." });
-  app.get("/api/team", admin, (_req, res) =>
+  app.get("/api/team", admin, async (_req, res) =>
     res.json({
-      users: store.db.prepare("SELECT email FROM users ORDER BY email").all(),
-      invitations: store.db
+      users: await store.db
+        .prepare("SELECT email FROM users ORDER BY email")
+        .all(),
+      invitations: await store.db
         .prepare("SELECT id,email,expires FROM invitations WHERE expires>?")
         .all(Date.now()),
     }),
   );
-  app.post("/api/team/invite", admin, (req, res) => {
+  app.post("/api/team/invite", admin, async (req, res) => {
     const email = String(req.body?.email || "")
       .trim()
       .toLowerCase();
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254)
       return res.status(400).json({ error: "Enter a valid email address." });
-    if (store.db.prepare("SELECT email FROM users WHERE email=?").get(email))
+    if (
+      await store.db.prepare("SELECT email FROM users WHERE email=?").get(email)
+    )
       return res
         .status(409)
         .json({ error: "This colleague already has access." });
     const token = randomBytes(32).toString("hex"),
       id = randomBytes(12).toString("hex");
-    store.db.prepare("DELETE FROM invitations WHERE email=?").run(email);
-    store.db
+    await store.db.prepare("DELETE FROM invitations WHERE email=?").run(email);
+    await store.db
       .prepare(
         "INSERT INTO invitations(id,email,token_hash,expires) VALUES(?,?,?,?)",
       )
@@ -229,23 +235,29 @@ export function createApp({
       );
     res.json({ token, email });
   });
-  app.delete("/api/team/users/:email", admin, (req, res) => {
-    store.db.prepare("DELETE FROM users WHERE email=?").run(req.params.email);
+  app.delete("/api/team/users/:email", admin, async (req, res) => {
+    await store.db
+      .prepare("DELETE FROM users WHERE email=?")
+      .run(req.params.email);
     for (const [token, session] of sessions)
       if (session.email === req.params.email) sessions.delete(token);
-    store.db
+    await store.db
       .prepare("DELETE FROM invitations WHERE email=?")
       .run(req.params.email);
     res.json({ ok: true });
   });
-  app.delete("/api/team/invitations/:id", admin, (req, res) => {
-    store.db.prepare("DELETE FROM invitations WHERE id=?").run(req.params.id);
+  app.delete("/api/team/invitations/:id", admin, async (req, res) => {
+    await store.db
+      .prepare("DELETE FROM invitations WHERE id=?")
+      .run(req.params.id);
     res.json({ ok: true });
   });
-  app.get("/api/accounts", (_req, res) =>
+  app.use("/api/map", mapsRouter({ key: mapsKey, fetcher }));
+  app.get("/api/accounts", async (_req, res) =>
     res.json({
-      accounts: store.all(),
-      geocodingAvailable: !!geocodingKey,
+      accounts: await store.all(),
+      geocodingAvailable: !!(geocodingKey || mapsKey),
+      mapServiceAvailable: !!mapsKey,
       authEnabled: !!password,
     }),
   );
@@ -264,13 +276,16 @@ export function createApp({
             "Could not import workbook. Check it is a valid .xlsx file with Company Name in the first row.",
         });
       }
-      res.json({ ...store.upsert(parsed.records), skipped: parsed.skipped });
+      res.json({
+        ...(await store.upsert(parsed.records)),
+        skipped: parsed.skipped,
+      });
     } catch (error) {
       next(error);
     }
   });
-  app.patch("/api/accounts/:id/location", (req, res) => {
-    const record = store.get(req.params.id);
+  app.patch("/api/accounts/:id/location", async (req, res) => {
+    const record = await store.get(req.params.id);
     if (!record) return res.status(404).json({ error: "Account not found." });
     const { latitude, longitude } = req.body || {};
     if (latitude === null && longitude === null) {
@@ -305,7 +320,7 @@ export function createApp({
       if (req.body.country)
         record.country = String(req.body.country).slice(0, 100);
     }
-    store.put(record);
+    await store.put(record);
     res.json(record);
   });
   app.post(
@@ -313,12 +328,12 @@ export function createApp({
     rateLimit({ windowMs: 60 * 1000, limit: 30 }),
     async (req, res, next) => {
       try {
-        if (!geocodingKey)
+        if (!geocodingKey && !mapsKey)
           return res.status(409).json({
             error:
-              "Global address search needs an OPENCAGE_API_KEY on the server. You can also enter coordinates manually.",
+              "Address search needs Azure Maps or OpenCage configured on the server. You can also enter coordinates manually.",
           });
-        const record = store.get(req.params.id);
+        const record = await store.get(req.params.id);
         if (!record)
           return res.status(404).json({ error: "Account not found." });
         const country = String(req.body.country || record.country || "").trim();
@@ -335,6 +350,12 @@ export function createApp({
             error:
               "No address information is available. Enter coordinates manually.",
           });
+        if (mapsKey) {
+          const result = await azureGeocode(query, mapsKey, fetcher);
+          return result.error
+            ? res.status(502).json(result)
+            : res.json({ ...result, country });
+        }
         const url = new URL("https://api.opencagedata.com/geocode/v1/json");
         url.search = new URLSearchParams({
           q: query,

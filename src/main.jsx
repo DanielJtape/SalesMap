@@ -45,6 +45,7 @@ import "@fontsource/manrope/latin-600.css";
 import "@fontsource/manrope/latin-700.css";
 import "@fontsource/manrope/latin-800.css";
 import "./style.css";
+import worldUrl from "./data/world.json?url";
 
 async function api(path, options = {}) {
   const response = await fetch("/api" + path, {
@@ -91,7 +92,8 @@ function App() {
     [selected, setSelected] = useState(null),
     [limit, setLimit] = useState(100),
     [team, setTeam] = useState(false),
-    [geocoding, setGeocoding] = useState(false);
+    [geocoding, setGeocoding] = useState(false),
+    [mapService, setMapService] = useState(false);
   const [inviteToken] = useState(() => {
     const token = new URLSearchParams(window.location.search).get("invite");
     if (token) history.replaceState({}, "", window.location.pathname);
@@ -104,6 +106,7 @@ function App() {
       const data = await api("/accounts");
       setAccounts(data.accounts);
       setGeocoding(data.geocodingAvailable);
+      setMapService(data.mapServiceAvailable || false);
       setReady(true);
     } catch (e) {
       setError(e.message);
@@ -427,7 +430,12 @@ function App() {
           </div>
         </aside>
         <section className="map-section" aria-label="Account map">
-          <MapView accounts={mapped} selected={active} onSelect={select} />
+          <MapView
+            streetAvailable={mapService}
+            accounts={mapped}
+            selected={active}
+            onSelect={select}
+          />
           <div className="map-stats">
             <div>
               <span className="stat-icon teal">
@@ -505,7 +513,7 @@ function App() {
           </div>
           <div className="map-caption">
             <Layers size={14} />
-            OpenStreetMap · Account locations
+            Country overview · Street map available online
           </div>
           {active && (
             <Details
@@ -537,26 +545,74 @@ function App() {
     </div>
   );
 }
-function MapView({ accounts, selected, onSelect }) {
+function MapView({ accounts, selected, onSelect, streetAvailable = false }) {
   const ref = useRef(),
     map = useRef(),
     cluster = useRef(),
     markers = useRef(new Map()),
     [fitTick, setFitTick] = useState(0),
-    [tileError, setTileError] = useState(false);
+    [tileError, setTileError] = useState(false),
+    [background, setBackground] = useState("overview"),
+    backgroundMode = useRef("overview");
   useEffect(() => {
     map.current = L.map(ref.current, {
       zoomControl: false,
       preferCanvas: true,
-    }).setView([27, 4], 2);
-    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-      attribution:
-        '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+      minZoom: 2,
       maxZoom: 19,
-    })
-      .on("tileerror", () => setTileError(true))
-      .on("tileload", () => setTileError(false))
-      .addTo(map.current);
+    }).setView([27, 4], 2);
+    map.current.createPane("overview");
+    map.current.getPane("overview").style.zIndex = "200";
+    let cancelled = false;
+    fetch(worldUrl)
+      .then((response) => {
+        if (!response.ok) throw new Error("Country map could not load");
+        return response.json();
+      })
+      .then((world) => {
+        if (cancelled || !map.current) return;
+        L.geoJSON(world, {
+          pane: "overview",
+          interactive: false,
+          style: {
+            color: "#bbc9b0",
+            weight: 1,
+            fillColor: "#f0efe3",
+            fillOpacity: 1,
+          },
+          attribution:
+            '<a href="https://www.naturalearthdata.com/">Natural Earth</a> · Country overview',
+        }).addTo(map.current);
+        const labels = L.layerGroup().addTo(map.current);
+        const updateLabels = () => {
+          labels.clearLayers();
+          for (const feature of world.features) {
+            const p = feature.properties;
+            if (
+              p.labelLat == null ||
+              p.labelLng == null ||
+              p.rank > map.current.getZoom()
+            )
+              continue;
+            const element = document.createElement("span");
+            element.textContent = p.name;
+            L.marker([p.labelLat, p.labelLng], {
+              interactive: false,
+              keyboard: false,
+              pane: "overview",
+              icon: L.divIcon({
+                className: "country-label",
+                html: element,
+                iconSize: [110, 20],
+                iconAnchor: [55, 10],
+              }),
+            }).addTo(labels);
+          }
+        };
+        updateLabels();
+        map.current.on("zoomend", updateLabels);
+      })
+      .catch(() => setTileError(true));
     L.control.zoom({ position: "bottomright" }).addTo(map.current);
     cluster.current = L.markerClusterGroup({
       chunkedLoading: true,
@@ -567,11 +623,93 @@ function MapView({ accounts, selected, onSelect }) {
     const observer = new ResizeObserver(() => map.current?.invalidateSize());
     observer.observe(ref.current);
     return () => {
+      cancelled = true;
       observer.disconnect();
       map.current.remove();
       map.current = null;
     };
   }, []);
+  useEffect(() => {
+    if (streetAvailable) setBackground("street");
+  }, [streetAvailable]);
+  useEffect(() => {
+    backgroundMode.current = background;
+    if (background !== "street") return;
+    setTileError(false);
+    let failed = false;
+    const tiles = L.tileLayer(
+      streetAvailable
+        ? "/api/map/tiles/{z}/{x}/{y}"
+        : "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
+      {
+        attribution: streetAvailable
+          ? '&copy; <a href="https://azure.microsoft.com/products/azure-maps/">Microsoft Azure Maps</a>'
+          : '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+        maxZoom: 19,
+      },
+    );
+    const fail = () => {
+      if (failed) return;
+      failed = true;
+      if (map.current?.hasLayer(tiles)) map.current.removeLayer(tiles);
+      setBackground("overview");
+      setTileError(true);
+      if (map.current?.getZoom() > 7)
+        map.current.setZoom(6, { animate: false });
+    };
+    tiles
+      .on("tileerror", fail)
+      .on("tileload", (event) => {
+        if (!event.tile.naturalWidth) fail();
+      })
+      .addTo(map.current);
+    let copyright = "";
+    const attribution = async () => {
+      if (!streetAvailable || failed || !map.current) return;
+      const bounds = map.current.getBounds(),
+        wrap = (v) => ((((v + 180) % 360) + 360) % 360) - 180;
+      const query = new URLSearchParams({
+        zoom: String(Math.round(map.current.getZoom())),
+        bounds: [
+          wrap(bounds.getWest()),
+          Math.max(-85, bounds.getSouth()),
+          wrap(bounds.getEast()),
+          Math.min(85, bounds.getNorth()),
+        ].join(","),
+      });
+      try {
+        const result = await api("/map/attribution?" + query);
+        if (failed || !map.current || backgroundMode.current !== "street")
+          return;
+        const span = document.createElement("span");
+        span.textContent = result.copyrights.join(" · ");
+        if (copyright)
+          map.current.attributionControl.removeAttribution(copyright);
+        copyright = span.innerHTML;
+        map.current.attributionControl.addAttribution(copyright);
+      } catch {
+        fail();
+      }
+    };
+    if (streetAvailable) {
+      map.current.on("moveend", attribution);
+      attribution();
+    }
+    const timer = setTimeout(() => {
+      if (tiles.isLoading()) fail();
+    }, 10000);
+    return () => {
+      failed = true;
+      clearTimeout(timer);
+      if (map.current) {
+        map.current.off("moveend", attribution);
+        if (copyright)
+          map.current.attributionControl.removeAttribution(copyright);
+      }
+      tiles.off();
+      if (map.current?.hasLayer(tiles)) map.current.removeLayer(tiles);
+    };
+  }, [background, streetAvailable]);
   useEffect(() => {
     cluster.current.clearLayers();
     markers.current.clear();
@@ -603,16 +741,20 @@ function MapView({ accounts, selected, onSelect }) {
     if (pins.length)
       map.current.fitBounds(cluster.current.getBounds(), {
         padding: [65, 100],
-        maxZoom: 12,
+        maxZoom: backgroundMode.current === "street" ? 12 : 6,
       });
   }, [accounts, onSelect, fitTick]);
   useEffect(() => {
     if (selected?.latitude !== null && selected?.latitude !== undefined) {
       const marker = markers.current.get(selected.id);
       if (marker) {
-        map.current.setView([selected.latitude, selected.longitude], 15, {
-          animate: false,
-        });
+        map.current.setView(
+          [selected.latitude, selected.longitude],
+          backgroundMode.current === "street" ? 15 : 6,
+          {
+            animate: false,
+          },
+        );
         if (map.current.hasLayer(marker)) marker.openTooltip();
       }
     }
@@ -620,10 +762,27 @@ function MapView({ accounts, selected, onSelect }) {
   return (
     <>
       <div ref={ref} className="map-canvas" />
+      <div className="background-control" aria-label="Map background">
+        <button
+          className={background === "overview" ? "active" : ""}
+          onClick={() => {
+            setBackground("overview");
+            if (map.current.getZoom() > 7)
+              map.current.setZoom(6, { animate: false });
+          }}
+        >
+          Country overview
+        </button>
+        <button
+          className={background === "street" ? "active" : ""}
+          onClick={() => setBackground("street")}
+        >
+          Street map
+        </button>
+      </div>
       {tileError && (
         <div className="tile-error" role="status">
-          Map background unavailable. Check access to tile.openstreetmap.org.
-          Account filters and details still work.
+          Street tiles could not load. The offline country map is available.
         </div>
       )}
       <button
@@ -814,14 +973,14 @@ function Details({ account: a, admin, available, onClose, onUpdate, onError }) {
             </button>
             {!available && (
               <p className="provider-note">
-                Address search needs an OpenCage API key in server settings.
+                Address search needs a mapping service configured on the server.
                 Manual placement works now.
               </p>
             )}
             {available && (
               <p className="provider-note">
-                Search sends this address to OpenCage. A city or postcode match
-                may be approximate.
+                Search sends this address to your configured mapping provider. A
+                city or postcode match may be approximate.
               </p>
             )}
             {candidates && (

@@ -361,3 +361,72 @@ test("production refuses an unprotected deployment", () => {
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("Azure Maps stays server-side, checks tile coordinates and returns geocoding candidates", async () => {
+  const calls = [];
+  const f = await fixture({
+    mapsKey: "test-map-key",
+    fetcher: async (url, options) => {
+      calls.push({ url, options });
+      assert.equal(url.hostname, "atlas.microsoft.com");
+      assert.equal(options.headers["subscription-key"], "test-map-key");
+      if (url.pathname === "/map/tile")
+        return new Response(Buffer.from([137, 80, 78, 71]), {
+          headers: { "Content-Type": "image/png" },
+        });
+      if (url.pathname === "/map/attribution")
+        return Response.json({ copyrights: ["© Test Map Provider"] });
+      return Response.json({
+        features: [
+          {
+            geometry: { type: "Point", coordinates: [2.35, 48.85] },
+            properties: {
+              address: { formattedAddress: "Paris, France" },
+              confidence: "High",
+            },
+          },
+        ],
+      });
+    },
+  });
+  try {
+    const a = normalizeRecord({ company: "Azure Account", city: "Paris" });
+    f.store.upsert([a]);
+    assert.equal((await f.request("/accounts")).body.mapServiceAvailable, true);
+    const tile = await fetch(f.base + "/api/map/tiles/4/8/5");
+    assert.equal(tile.status, 200);
+    assert.equal(tile.headers.get("content-type"), "image/png");
+    assert.equal((await f.request("/map/tiles/4/99/5")).status, 400);
+    assert.equal((await f.request("/map/tiles/no/8/5")).status, 400);
+    const attribution = await f.request(
+      "/map/attribution?zoom=4&bounds=-5,45,10,55",
+    );
+    assert.deepEqual(attribution.body.copyrights, ["© Test Map Provider"]);
+    const result = await f.request(`/accounts/${a.id}/geocode`, {
+      method: "POST",
+      body: { country: "France" },
+    });
+    assert.equal(result.body.candidates[0].latitude, 48.85);
+    assert.equal(result.body.candidates[0].confidence, 9);
+    assert.equal(f.store.get(a.id).latitude, null);
+    assert.ok(calls.every((c) => !c.url.searchParams.has("subscription-key")));
+  } finally {
+    f.close();
+  }
+});
+
+test("Azure map tiles and attribution require sign-in", async () => {
+  const f = await fixture({
+    password: "map-private-test-password",
+    mapsKey: "test-map-key",
+  });
+  try {
+    assert.equal((await f.request("/map/tiles/4/8/5")).status, 401);
+    assert.equal(
+      (await f.request("/map/attribution?zoom=4&bounds=-5,45,10,55")).status,
+      401,
+    );
+  } finally {
+    f.close();
+  }
+});

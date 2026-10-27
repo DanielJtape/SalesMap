@@ -83,6 +83,42 @@ try {
   await page
     .getByRole("heading", { name: "London Paintworks", exact: true })
     .waitFor();
+  await page.locator(".country-label").first().waitFor();
+  const landPixels = await page
+    .locator(".leaflet-overview-pane canvas")
+    .evaluate((canvas) => {
+      const data = canvas
+        .getContext("2d")
+        .getImageData(0, 0, canvas.width, canvas.height).data;
+      let n = 0;
+      for (let i = 0; i < data.length; i += 4)
+        if (
+          data[i] === 240 &&
+          data[i + 1] === 239 &&
+          data[i + 2] === 227 &&
+          data[i + 3] > 0
+        )
+          n++;
+      return n;
+    });
+  assert.ok(
+    landPixels > 1000,
+    "The map must render real country outlines, not a blank background.",
+  );
+  await page.route("https://*.tile.openstreetmap.org/**", (route) =>
+    route.abort(),
+  );
+  await page.getByRole("button", { name: "Street map", exact: true }).click();
+  await page
+    .getByText(
+      "Street tiles could not load. The offline country map is available.",
+      { exact: true },
+    )
+    .waitFor();
+  assert.equal(
+    await page.locator(".background-control button.active").innerText(),
+    "Country overview",
+  );
   await page.locator(".account-marker").first().click();
   await page.getByLabel("Account details", { exact: true }).waitFor();
   await page.getByRole("button", { name: "Close account details" }).click();

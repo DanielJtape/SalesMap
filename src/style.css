@@ -1413,3 +1413,56 @@ select:focus {
     padding: 7px 10px;
   }
 }
+
+.map-canvas {
+  background: #dce9e9;
+}
+.country-label {
+  text-align: center;
+  color: #798e84;
+  font:
+    10px "DM Sans",
+    sans-serif;
+  letter-spacing: 0.5px;
+  white-space: nowrap;
+  pointer-events: none;
+  text-shadow:
+    0 1px 2px #fff,
+    0 -1px 2px #fff;
+}
+.background-control {
+  position: absolute;
+  right: 12px;
+  bottom: 153px;
+  z-index: 400;
+  padding: 3px;
+  display: flex;
+  background: #fffffff0;
+  border: 1px solid #d5dfd1;
+  border-radius: 7px;
+  box-shadow: 0 2px 6px #233d2910;
+}
+.background-control button {
+  font-size: 10px;
+  padding: 8px 10px;
+  border-radius: 4px;
+  color: #71836e;
+}
+.background-control button.active {
+  background: #e7efe2;
+  color: #345a48;
+  font-weight: 600;
+}
+.details ~ .background-control {
+  display: none;
+}
+@media (max-width: 700px) {
+  .background-control {
+    bottom: 109px;
+    right: 10px;
+  }
+  .background-control button {
+    font-size: 8px;
+    padding: 7px;
+  }
+}

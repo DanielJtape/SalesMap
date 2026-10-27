@@ -1,0 +1,266 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "appName": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 40,
+      "metadata": {
+        "description": "Globally unique App Service name, lowercase letters, digits and hyphens."
+      }
+    },
+    "location": {
+      "type": "string",
+      "defaultValue": "[resourceGroup().location]"
+    },
+    "adminPassword": {
+      "type": "securestring",
+      "minLength": 12
+    },
+    "databasePassword": {
+      "type": "securestring",
+      "minLength": 16
+    },
+    "databaseVersion": {
+      "type": "string",
+      "defaultValue": "17"
+    }
+  },
+  "variables": {
+    "planName": "[concat(parameters('appName'),'-plan')]",
+    "databaseServer": "[concat('sm-',uniqueString(resourceGroup().id,parameters('appName')))]",
+    "mapsName": "[concat(parameters('appName'),'-maps')]",
+    "vnetName": "[concat(parameters('appName'),'-network')]",
+    "dnsZone": "salesmap.private.postgres.database.azure.com",
+    "databaseUser": "salesmapadmin"
+  },
+  "resources": [
+    {
+      "type": "Microsoft.Network/virtualNetworks",
+      "apiVersion": "2023-11-01",
+      "name": "[variables('vnetName')]",
+      "location": "[parameters('location')]",
+      "properties": {
+        "addressSpace": {
+          "addressPrefixes": ["10.92.0.0/16"]
+        },
+        "subnets": [
+          {
+            "name": "web",
+            "properties": {
+              "addressPrefix": "10.92.1.0/24",
+              "delegations": [
+                {
+                  "name": "app-service",
+                  "properties": {
+                    "serviceName": "Microsoft.Web/serverFarms"
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "name": "database",
+            "properties": {
+              "addressPrefix": "10.92.2.0/24",
+              "delegations": [
+                {
+                  "name": "postgresql",
+                  "properties": {
+                    "serviceName": "Microsoft.DBforPostgreSQL/flexibleServers"
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "type": "Microsoft.Network/privateDnsZones",
+      "apiVersion": "2020-06-01",
+      "name": "[variables('dnsZone')]",
+      "location": "global",
+      "properties": {}
+    },
+    {
+      "type": "Microsoft.Network/privateDnsZones/virtualNetworkLinks",
+      "apiVersion": "2020-06-01",
+      "name": "[concat(variables('dnsZone'),'/salesmap-network')]",
+      "location": "global",
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/privateDnsZones',variables('dnsZone'))]",
+        "[resourceId('Microsoft.Network/virtualNetworks',variables('vnetName'))]"
+      ],
+      "properties": {
+        "registrationEnabled": false,
+        "virtualNetwork": {
+          "id": "[resourceId('Microsoft.Network/virtualNetworks',variables('vnetName'))]"
+        }
+      }
+    },
+    {
+      "type": "Microsoft.DBforPostgreSQL/flexibleServers",
+      "apiVersion": "2024-08-01",
+      "name": "[variables('databaseServer')]",
+      "location": "[parameters('location')]",
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/privateDnsZones/virtualNetworkLinks',variables('dnsZone'),'salesmap-network')]"
+      ],
+      "sku": {
+        "name": "Standard_B1ms",
+        "tier": "Burstable"
+      },
+      "properties": {
+        "version": "[parameters('databaseVersion')]",
+        "administratorLogin": "[variables('databaseUser')]",
+        "administratorLoginPassword": "[parameters('databasePassword')]",
+        "storage": {
+          "storageSizeGB": 32
+        },
+        "backup": {
+          "backupRetentionDays": 7,
+          "geoRedundantBackup": "Disabled"
+        },
+        "highAvailability": {
+          "mode": "Disabled"
+        },
+        "network": {
+          "publicNetworkAccess": "Disabled",
+          "delegatedSubnetResourceId": "[resourceId('Microsoft.Network/virtualNetworks/subnets',variables('vnetName'),'database')]",
+          "privateDnsZoneArmResourceId": "[resourceId('Microsoft.Network/privateDnsZones',variables('dnsZone'))]"
+        }
+      }
+    },
+    {
+      "type": "Microsoft.DBforPostgreSQL/flexibleServers/databases",
+      "apiVersion": "2024-08-01",
+      "name": "[concat(variables('databaseServer'),'/salesmap')]",
+      "dependsOn": [
+        "[resourceId('Microsoft.DBforPostgreSQL/flexibleServers',variables('databaseServer'))]"
+      ],
+      "properties": {
+        "charset": "UTF8",
+        "collation": "en_US.utf8"
+      }
+    },
+    {
+      "type": "Microsoft.Maps/accounts",
+      "apiVersion": "2023-06-01",
+      "name": "[variables('mapsName')]",
+      "location": "global",
+      "kind": "Gen2",
+      "sku": {
+        "name": "G2"
+      },
+      "properties": {
+        "disableLocalAuth": false
+      }
+    },
+    {
+      "type": "Microsoft.Web/serverfarms",
+      "apiVersion": "2023-12-01",
+      "name": "[variables('planName')]",
+      "location": "[parameters('location')]",
+      "kind": "linux",
+      "sku": {
+        "name": "B1",
+        "tier": "Basic",
+        "capacity": 1
+      },
+      "properties": {
+        "reserved": true
+      }
+    },
+    {
+      "type": "Microsoft.Web/sites",
+      "apiVersion": "2023-12-01",
+      "name": "[parameters('appName')]",
+      "location": "[parameters('location')]",
+      "kind": "app,linux",
+      "identity": {
+        "type": "SystemAssigned"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Web/serverfarms',variables('planName'))]",
+        "[resourceId('Microsoft.DBforPostgreSQL/flexibleServers/databases',variables('databaseServer'),'salesmap')]",
+        "[resourceId('Microsoft.Maps/accounts',variables('mapsName'))]"
+      ],
+      "properties": {
+        "serverFarmId": "[resourceId('Microsoft.Web/serverfarms',variables('planName'))]",
+        "httpsOnly": true,
+        "virtualNetworkSubnetId": "[resourceId('Microsoft.Network/virtualNetworks/subnets',variables('vnetName'),'web')]",
+        "siteConfig": {
+          "linuxFxVersion": "NODE|24-lts",
+          "appCommandLine": "node server/index.js",
+          "alwaysOn": true,
+          "numberOfWorkers": 1,
+          "http20Enabled": true,
+          "ftpsState": "Disabled",
+          "minTlsVersion": "1.2",
+          "scmMinTlsVersion": "1.2",
+          "healthCheckPath": "/api/health",
+          "appSettings": [
+            {
+              "name": "NODE_ENV",
+              "value": "production"
+            },
+            {
+              "name": "TRUST_PROXY",
+              "value": "1"
+            },
+            {
+              "name": "SCM_DO_BUILD_DURING_DEPLOYMENT",
+              "value": "false"
+            },
+            {
+              "name": "SALES_MAP_PASSWORD",
+              "value": "[parameters('adminPassword')]"
+            },
+            {
+              "name": "MAPS_API_KEY",
+              "value": "[listKeys(resourceId('Microsoft.Maps/accounts',variables('mapsName')),'2023-06-01').primaryKey]"
+            },
+            {
+              "name": "DATABASE_URL",
+              "value": "[concat('postgresql://',variables('databaseUser'),':',uriComponent(parameters('databasePassword')),'@',variables('databaseServer'),'.postgres.database.azure.com:5432/salesmap?sslmode=verify-full')]"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "type": "Microsoft.Web/sites/basicPublishingCredentialsPolicies",
+      "apiVersion": "2023-12-01",
+      "name": "[concat(parameters('appName'),'/scm')]",
+      "dependsOn": [
+        "[resourceId('Microsoft.Web/sites',parameters('appName'))]"
+      ],
+      "properties": {
+        "allow": false
+      }
+    },
+    {
+      "type": "Microsoft.Web/sites/basicPublishingCredentialsPolicies",
+      "apiVersion": "2023-12-01",
+      "name": "[concat(parameters('appName'),'/ftp')]",
+      "dependsOn": [
+        "[resourceId('Microsoft.Web/sites',parameters('appName'))]"
+      ],
+      "properties": {
+        "allow": false
+      }
+    }
+  ],
+  "outputs": {
+    "appUrl": {
+      "type": "string",
+      "value": "[concat('https://',parameters('appName'),'.azurewebsites.net')]"
+    },
+    "appName": {
+      "type": "string",
+      "value": "[parameters('appName')]"
+    }
+  }
+}

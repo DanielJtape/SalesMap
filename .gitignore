@@ -11,3 +11,5 @@ data/*
 *.sqlite*
 playwright-report/
 test-results/
+
+demo/
