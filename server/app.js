@@ -153,23 +153,19 @@ export function createApp({
       .prepare("SELECT * FROM invitations WHERE token_hash=? AND expires>?")
       .get(hash, Date.now());
     if (!invite)
-      return res
-        .status(400)
-        .json({
-          error:
-            "This invitation is invalid or has expired. Ask your administrator for a new link.",
-        });
+      return res.status(400).json({
+        error:
+          "This invitation is invalid or has expired. Ask your administrator for a new link.",
+      });
     if (
       store.db
         .prepare("SELECT email FROM users WHERE email=?")
         .get(invite.email)
     )
-      return res
-        .status(409)
-        .json({
-          error:
-            "This account is already registered. Sign in with your password.",
-        });
+      return res.status(409).json({
+        error:
+          "This account is already registered. Sign in with your password.",
+      });
     const salt = randomBytes(16).toString("hex");
     store.db
       .prepare("INSERT INTO users(email,hash,salt) VALUES(?,?,?)")
@@ -263,12 +259,10 @@ export function createApp({
       try {
         parsed = await readWorkbook(req.file.buffer);
       } catch {
-        return res
-          .status(400)
-          .json({
-            error:
-              "Could not import workbook. Check it is a valid .xlsx file with Company Name in the first row.",
-          });
+        return res.status(400).json({
+          error:
+            "Could not import workbook. Check it is a valid .xlsx file with Company Name in the first row.",
+        });
       }
       res.json({ ...store.upsert(parsed.records), skipped: parsed.skipped });
     } catch (error) {
@@ -295,12 +289,10 @@ export function createApp({
         Math.abs(latitude) > 90 ||
         Math.abs(longitude) > 180
       )
-        return res
-          .status(400)
-          .json({
-            error:
-              "Enter valid latitude (-90 to 90) and longitude (-180 to 180).",
-          });
+        return res.status(400).json({
+          error:
+            "Enter valid latitude (-90 to 90) and longitude (-180 to 180).",
+        });
       Object.assign(record, {
         latitude,
         longitude,
@@ -322,33 +314,27 @@ export function createApp({
     async (req, res, next) => {
       try {
         if (!geocodingKey)
-          return res
-            .status(409)
-            .json({
-              error:
-                "Global address search needs an OPENCAGE_API_KEY on the server. You can also enter coordinates manually.",
-            });
+          return res.status(409).json({
+            error:
+              "Global address search needs an OPENCAGE_API_KEY on the server. You can also enter coordinates manually.",
+          });
         const record = store.get(req.params.id);
         if (!record)
           return res.status(404).json({ error: "Account not found." });
         const country = String(req.body.country || record.country || "").trim();
         if (!country)
-          return res
-            .status(400)
-            .json({
-              error:
-                "Choose a country to avoid matching the wrong city or postcode.",
-            });
+          return res.status(400).json({
+            error:
+              "Choose a country to avoid matching the wrong city or postcode.",
+          });
         const query = [record.street, record.city, record.postcode, country]
           .filter(Boolean)
           .join(", ");
         if (!record.street && !record.city && !record.postcode)
-          return res
-            .status(400)
-            .json({
-              error:
-                "No address information is available. Enter coordinates manually.",
-            });
+          return res.status(400).json({
+            error:
+              "No address information is available. Enter coordinates manually.",
+          });
         const url = new URL("https://api.opencagedata.com/geocode/v1/json");
         url.search = new URLSearchParams({
           q: query,
@@ -361,11 +347,9 @@ export function createApp({
           signal: AbortSignal.timeout(15000),
         });
         if (!upstream.ok)
-          return res
-            .status(502)
-            .json({
-              error: `Address provider returned ${upstream.status}. Check your API key and quota.`,
-            });
+          return res.status(502).json({
+            error: `Address provider returned ${upstream.status}. Check your API key and quota.`,
+          });
         const result = await upstream.json();
         res.json({
           candidates: (result.results || []).map((r) => ({
