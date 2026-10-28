@@ -6,7 +6,7 @@ services:
     buildCommand: npm ci && npm run build
     startCommand: npm start
     healthCheckPath: /api/health
-    autoDeployTrigger: off
+    autoDeployTrigger: "off"
     envVars:
       - key: NODE_VERSION
         value: 24.19.0
@@ -17,8 +17,6 @@ services:
       - key: TRUST_PROXY
         value: "1"
       - key: SALES_MAP_PASSWORD
-        sync: false
-      - key: OPENCAGE_API_KEY
         sync: false
     disk:
       name: salesmap-data

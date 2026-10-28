@@ -5,7 +5,7 @@ The repository contains application code and no contact data. Deployment is a se
 ## Render (suggested first deployment)
 
 1. In Render, create a Blueprint from this GitHub repository and its `render.yaml`. The starter service and persistent disk are paid resources; confirm the quoted price there before deploying.
-2. Set `SALES_MAP_PASSWORD` to a long, unique administrator password using Render's secret settings. Never put it in GitHub source or chat. Set `OPENCAGE_API_KEY` if using address search; leave it empty to use manual/imported coordinates.
+2. Set `SALES_MAP_PASSWORD` to a long, unique administrator password using Render's secret settings. Never put it in GitHub source or chat. No mapping API key is required to launch: the bundled country map works without one. Add `MAPS_API_KEY` (Azure Maps) or `OPENCAGE_API_KEY` later if using online address search.
 3. Confirm persistent disk `/var/data`, `DATA_DIR=/var/data/salesmap`, Node 24 and `TRUST_PROXY=1`. Render terminates HTTPS; production cookies require HTTPS. Do not enable broad proxy trust on a directly exposed server.
 4. Deploy; check `/api/health` returns `{"ok":true}`. Open the HTTPS app, confirm it asks you to sign in, and verify an unauthenticated `/api/accounts` request returns 401.
 5. Sign in as administrator and upload the original workbook. GitHub intentionally does not contain it. Review locations or upload an enriched workbook with countries and coordinates.
