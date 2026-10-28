@@ -1,4 +1,5 @@
 import pg from "pg";
+import { ukPostcode, compactPostcode, locatedAtPostcode } from "./postcodes.js";
 
 // SQLite remains the local development store. Azure uses a managed PostgreSQL
 // database rather than placing SQLite/WAL files on a network-mounted disk.
@@ -95,5 +96,50 @@ export async function openPostgresStore(connectionString) {
       client.release();
     }
   };
-  return { db: { prepare, close: () => pool.end() }, all, get, put, upsert };
+  const applyPostcodeLocations = async (updates) => {
+    if (!updates.length) return 0;
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      const current = new Map(
+        (
+          await client.query(
+            "SELECT id,record FROM accounts WHERE id=ANY($1::text[]) FOR UPDATE",
+            [updates.map((r) => r.id)],
+          )
+        ).rows.map((r) => [r.id, r.record]),
+      );
+      const records = updates
+        .filter(
+          (update) =>
+            current.has(update.id) &&
+            ukPostcode(current.get(update.id)) ===
+              compactPostcode(update.postcode),
+        )
+        .map((update) => ({
+          id: update.id,
+          record: locatedAtPostcode(current.get(update.id), update),
+        }));
+      if (records.length)
+        await client.query(
+          "UPDATE accounts SET record=items.record FROM jsonb_to_recordset($1::jsonb) AS items(id TEXT,record JSONB) WHERE accounts.id=items.id",
+          [JSON.stringify(records)],
+        );
+      await client.query("COMMIT");
+      return records.length;
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+  };
+  return {
+    db: { prepare, close: () => pool.end() },
+    all,
+    get,
+    put,
+    upsert,
+    applyPostcodeLocations,
+  };
 }

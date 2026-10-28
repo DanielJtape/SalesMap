@@ -43,6 +43,16 @@ The supplied workbook has **24,048 rows**, including 675 additional occurrences 
 
 The country overview is bundled with the app and works without external tile requests. The **Street map** control enables online tiles. When `MAPS_API_KEY` is configured, streets are fetched through the authenticated server-side Azure Maps routes; provider keys are never sent to the browser. Azure Maps attribution is fetched for the viewport. Otherwise the optional online layer uses OpenStreetMap. If tiles fail, the app returns to the country overview. Country outlines do not contain street-level detail.
 
+## Bulk UK postcode lookup
+
+After importing, an administrator can select **Locate UK accounts → Locate UK postcodes**. The server sends only eligible unique UK postcodes to the free [postcodes.io](https://postcodes.io/) bulk lookup endpoint in batches of up to 100, with a pause between batches. No company names, contacts or tape details are sent. No API key is required. Render must be able to reach `https://api.postcodes.io`.
+
+Pins are explicitly labelled **UK postcode centroid** and represent approximate postcode centres, not verified business premises. Existing coordinates and explicitly non-UK countries are skipped. Invalid/unknown postcodes stay unlocated. The supplied workbook contains 15,370 rows with UK-format postcodes; the number actually located depends on successful matches. A response must return the exact requested postcode and a valid UK-range coordinate before it is used.
+
+Progress is visible in the lookup window. An administrator can stop the job. Completed locations are persisted; after a server restart or interruption, start again to process the remaining accounts. Job progress itself is held in memory and resets on restart. Only one job runs per application instance; continue to use one instance. Re-imports preserve these locations. Manual edits and address changes made while lookup is running are protected from stale results.
+
+The remaining countries need separate address/country matching. 2,636 workbook rows have no street, city or postcode and need additional source information.
+
 ## Place accounts on the map
 
 Select an account. Enter a country and search with OpenCage, then choose a candidate after reviewing its address. Configure `MAPS_API_KEY` for Azure Maps or, optionally, `OPENCAGE_API_KEY` for OpenCage on the server for this search; it never goes to the browser. Searching transmits that account's address to the configured provider. Azure Maps takes precedence when both keys are set. Provider confidence is advisory, not a precision guarantee. Alternatively enter verified latitude/longitude directly, or import an enriched workbook with coordinates.

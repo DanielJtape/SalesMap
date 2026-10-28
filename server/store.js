@@ -1,3 +1,4 @@
+import { ukPostcode, compactPostcode, locatedAtPostcode } from "./postcodes.js";
 import { DatabaseSync } from "node:sqlite";
 import { mkdirSync } from "node:fs";
 import { resolve } from "node:path";
@@ -60,5 +61,26 @@ export function openStore(dataDir) {
       total: db.prepare("SELECT COUNT(*) AS n FROM accounts").get().n,
     };
   }
-  return { db, all, get, put, upsert };
+  function applyPostcodeLocations(updates) {
+    let changed = 0;
+    db.exec("BEGIN");
+    try {
+      for (const update of updates) {
+        const current = get(update.id);
+        if (
+          !current ||
+          ukPostcode(current) !== compactPostcode(update.postcode)
+        )
+          continue;
+        put(locatedAtPostcode(current, update));
+        changed++;
+      }
+      db.exec("COMMIT");
+      return changed;
+    } catch (error) {
+      db.exec("ROLLBACK");
+      throw error;
+    }
+  }
+  return { db, all, get, put, upsert, applyPostcodeLocations };
 }

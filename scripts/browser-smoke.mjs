@@ -83,6 +83,18 @@ try {
   await page
     .getByRole("heading", { name: "London Paintworks", exact: true })
     .waitFor();
+  await page
+    .getByRole("button", { name: "Locate UK accounts", exact: true })
+    .click();
+  await page
+    .getByRole("dialog", { name: "Locate UK accounts", exact: true })
+    .waitFor();
+  await page
+    .getByRole("button", { name: "Locate UK postcodes", exact: true })
+    .waitFor();
+  await page
+    .getByRole("button", { name: "Close postcode lookup", exact: true })
+    .click();
   await page.locator(".country-label").first().waitFor();
   const landPixels = await page
     .locator(".leaflet-overview-pane canvas")

@@ -13,6 +13,7 @@ import { resolve } from "node:path";
 import { readWorkbook } from "./importer.js";
 import { openStore } from "./store.js";
 import { mapsRouter, azureGeocode } from "./maps.js";
+import { postcodeLookup } from "./postcodes.js";
 
 export function createApp({
   dataDir = "./data",
@@ -23,6 +24,7 @@ export function createApp({
   trustProxy = false,
   fetcher = fetch,
   storage = null,
+  postcodeDelayMs = 1100,
 } = {}) {
   if (production && password.length < 12)
     throw new Error(
@@ -252,6 +254,25 @@ export function createApp({
       .run(req.params.id);
     res.json({ ok: true });
   });
+  const postcodes = postcodeLookup({
+    store,
+    fetcher,
+    delayMs: postcodeDelayMs,
+  });
+  app.get("/api/locations/uk-postcodes", admin, (_req, res) =>
+    res.json(postcodes.status()),
+  );
+  app.post("/api/locations/uk-postcodes", admin, async (_req, res) => {
+    if (!(await postcodes.start()))
+      return res
+        .status(409)
+        .json({ error: "A postcode lookup is already running." });
+    res.status(202).json(postcodes.status());
+  });
+  app.post("/api/locations/uk-postcodes/cancel", admin, (_req, res) => {
+    postcodes.cancel();
+    res.json(postcodes.status());
+  });
   app.use("/api/map", mapsRouter({ key: mapsKey, fetcher }));
   app.get("/api/accounts", async (_req, res) =>
     res.json({
@@ -412,5 +433,5 @@ export function createApp({
       .status(500)
       .json({ error: "The request could not be completed. Please retry." });
   });
-  return { app, store };
+  return { app, store, postcodes };
 }

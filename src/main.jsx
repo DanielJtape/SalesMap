@@ -92,6 +92,7 @@ function App() {
     [selected, setSelected] = useState(null),
     [limit, setLimit] = useState(100),
     [team, setTeam] = useState(false),
+    [locate, setLocate] = useState(false),
     [geocoding, setGeocoding] = useState(false),
     [mapService, setMapService] = useState(false);
   const [inviteToken] = useState(() => {
@@ -199,6 +200,14 @@ function App() {
         <div className="header-actions">
           {admin && (
             <>
+              <button
+                aria-label="Locate UK accounts"
+                className="button ghost"
+                onClick={() => setLocate(true)}
+              >
+                <MapPin size={16} />
+                <span>Locate UK accounts</span>
+              </button>
               <button className="button ghost" onClick={() => setTeam(true)}>
                 <Users size={16} />
                 Team
@@ -536,6 +545,15 @@ function App() {
             : "Administrator workspace"}
         </span>
       </footer>
+      {locate && (
+        <PostcodeModal
+          onClose={() => {
+            setLocate(false);
+            load();
+          }}
+          onChanged={load}
+        />
+      )}
       {team && (
         <TeamModal
           onClose={() => setTeam(false)}
@@ -1166,6 +1184,156 @@ function Login({ inviteToken, onLogin }) {
         </small>
       </div>
       <p className="login-footer">Every account. A clearer picture.</p>
+    </div>
+  );
+}
+function PostcodeModal({ onClose, onChanged }) {
+  const [job, setJob] = useState(null),
+    [error, setError] = useState(""),
+    [busy, setBusy] = useState(false);
+  const finished = useRef(false);
+  useEffect(() => {
+    let active = true;
+    const poll = async () => {
+      try {
+        const data = await api("/locations/uk-postcodes");
+        if (!active) return;
+        setJob(data);
+        if (
+          ["completed", "cancelled", "failed"].includes(data.status) &&
+          !finished.current
+        ) {
+          finished.current = true;
+          onChanged();
+        }
+      } catch (e) {
+        if (active) setError(e.message);
+      }
+    };
+    poll();
+    const timer = setInterval(poll, 2000);
+    return () => {
+      active = false;
+      clearInterval(timer);
+    };
+  }, []);
+  async function start() {
+    setBusy(true);
+    setError("");
+    finished.current = false;
+    try {
+      setJob(await api("/locations/uk-postcodes", { method: "POST" }));
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+  async function cancel() {
+    try {
+      setJob(await api("/locations/uk-postcodes/cancel", { method: "POST" }));
+    } catch (e) {
+      setError(e.message);
+    }
+  }
+  return (
+    <div className="modal-backdrop">
+      <section
+        role="dialog"
+        aria-modal="true"
+        aria-label="Locate UK accounts"
+        className="team-modal postcode-modal"
+      >
+        <div className="detail-top">
+          <h2>Locate UK accounts</h2>
+          <button
+            className="icon-button"
+            aria-label="Close postcode lookup"
+            onClick={onClose}
+          >
+            <X size={20} />
+          </button>
+        </div>
+        <p>
+          Find coordinates for all unmapped accounts with a valid UK postcode
+          format, across all managers and filters. Uses the free postcodes.io
+          service; only postcodes are sent.
+        </p>
+        <div className="postcode-caution">
+          <MapPin size={18} />
+          <p>
+            Pins show approximate <strong>postcode centres</strong>, not
+            verified business premises. Existing saved pins are preserved.
+            Accounts without a valid match stay in Needs location.
+          </p>
+        </div>
+        {job && job.status !== "idle" && (
+          <>
+            <div className="lookup-progress">
+              <span>
+                {job.status === "running"
+                  ? "Looking up postcodes…"
+                  : job.status === "completed"
+                    ? "Lookup complete"
+                    : job.status === "cancelled"
+                      ? "Lookup stopped"
+                      : "Lookup interrupted"}
+              </span>
+              <strong>
+                {number(job.processedPostcodes)} / {number(job.uniquePostcodes)}{" "}
+                postcodes
+              </strong>
+            </div>
+            <progress
+              max={job.uniquePostcodes || 1}
+              value={job.processedPostcodes}
+            />
+            <div className="lookup-counts">
+              <div>
+                <strong>{number(job.locatedAccounts)}</strong>
+                <span>Accounts located</span>
+              </div>
+              <div>
+                <strong>{number(job.unmatchedAccounts)}</strong>
+                <span>No match found</span>
+              </div>
+            </div>
+            {job.error && (
+              <p role="alert" className="danger">
+                {job.error}
+              </p>
+            )}
+          </>
+        )}
+        {error && (
+          <p role="alert" className="danger">
+            {error}
+          </p>
+        )}
+        {job?.status === "running" ? (
+          <button className="button ghost full" onClick={cancel}>
+            Stop lookup
+          </button>
+        ) : (
+          <button
+            className="button primary full"
+            disabled={busy || !job}
+            onClick={start}
+          >
+            {busy ? (
+              <LoaderCircle className="spin" size={16} />
+            ) : (
+              <MapPin size={16} />
+            )}
+            Locate UK postcodes
+          </button>
+        )}
+        <p className="provider-note">
+          Usually takes a few minutes for a large workbook. Saved results
+          survive restarts; an interrupted lookup can be run again. Keep this
+          window open to see progress.
+        </p>
+      </section>
     </div>
   );
 }

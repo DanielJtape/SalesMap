@@ -220,6 +220,19 @@ test("private account data, single-use invitations, viewer restrictions and imme
     );
     assert.equal((await f.request("/team", { cookie: viewer })).status, 403);
     assert.equal(
+      (await f.request("/locations/uk-postcodes", { cookie: viewer })).status,
+      403,
+    );
+    assert.equal(
+      (
+        await f.request("/locations/uk-postcodes", {
+          cookie: viewer,
+          method: "POST",
+        })
+      ).status,
+      403,
+    );
+    assert.equal(
       (await f.request("/import", { method: "POST", cookie: viewer })).status,
       403,
     );
@@ -425,6 +438,50 @@ test("Azure map tiles and attribution require sign-in", async () => {
     assert.equal(
       (await f.request("/map/attribution?zoom=4&bounds=-5,45,10,55")).status,
       401,
+    );
+  } finally {
+    f.close();
+  }
+});
+
+test("bulk UK lookup API starts a job and reports persisted approximate locations", async () => {
+  const f = await fixture({
+    postcodeDelayMs: 0,
+    fetcher: async () =>
+      Response.json({
+        result: [
+          {
+            query: "SW1A1AA",
+            result: {
+              postcode: "SW1A 1AA",
+              latitude: 51.501,
+              longitude: -0.141,
+            },
+          },
+        ],
+      }),
+  });
+  try {
+    const account = normalizeRecord({
+      company: "UK bulk account",
+      postcode: "SW1A1AA",
+    });
+    f.store.upsert([account]);
+    assert.equal(
+      (await f.request("/locations/uk-postcodes", { method: "POST" })).status,
+      202,
+    );
+    let status;
+    for (let i = 0; i < 100; i++) {
+      status = (await f.request("/locations/uk-postcodes")).body;
+      if (status.status !== "running") break;
+      await new Promise((r) => setTimeout(r, 5));
+    }
+    assert.equal(status.status, "completed");
+    assert.equal(status.locatedAccounts, 1);
+    assert.equal(
+      f.store.get(account.id).locationSource,
+      "UK postcode centroid",
     );
   } finally {
     f.close();

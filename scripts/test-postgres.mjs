@@ -21,8 +21,16 @@ try {
     company: "PostgreSQL Account",
     status: "Acc",
     city: "London",
+    postcode: "SW1A1AA",
   });
   assert.deepEqual(await store.upsert([a]), { added: 1, updated: 0, total: 1 });
+  assert.equal(
+    await store.applyPostcodeLocations([
+      { id: a.id, postcode: "SW1A 1AA", latitude: 51.501, longitude: -0.141 },
+    ]),
+    1,
+  );
+  assert.equal((await store.get(a.id)).locationSource, "UK postcode centroid");
   await store.put({
     ...a,
     latitude: 51.5,
@@ -31,6 +39,12 @@ try {
   });
   assert.deepEqual(await store.upsert([a]), { added: 0, updated: 1, total: 1 });
   assert.equal((await store.get(a.id)).latitude, 51.5);
+  assert.equal(
+    await store.applyPostcodeLocations([
+      { id: a.id, postcode: "SW1A 1AA", latitude: 51.501, longitude: -0.141 },
+    ]),
+    0,
+  );
   const { app } = createApp({
     storage: store,
     password: "postgres-admin-test-password",
