@@ -19,6 +19,8 @@ jobs:
           NODE_ENV: production
       - run: npm test
       - run: npm run build
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:map-scale
   postgres-integration:
     runs-on: ubuntu-latest
     services:

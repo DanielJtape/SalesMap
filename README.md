@@ -21,9 +21,11 @@ npm test
 npm run build
 # Optional browser smoke: install Chromium and set CHROMIUM_PATH if needed
 npm run test:browser
+# Regression check with 24,048 synthetic accounts and 15,370 saved pins
+npm run test:map-scale
 ```
 
-The browser smoke uses isolated synthetic accounts and a temporary database, never your contact list.
+The browser checks use isolated synthetic accounts and temporary databases, never your contact list. The large-map check reloads, filters and fits 15,370 saved pins under CPU throttling and confirms all pins finish clustering without browser errors.
 
 ## Import the workbook
 

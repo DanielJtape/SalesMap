@@ -1523,3 +1523,28 @@ select:focus {
   display: block;
   margin-top: 5px;
 }
+
+.map-loading {
+  position: absolute;
+  z-index: 400;
+  left: 21px;
+  bottom: 70px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 13px;
+  background: #fffffff2;
+  border: 1px solid #dce5d6;
+  border-radius: 7px;
+  font-size: 10px;
+  color: #4e765b;
+  box-shadow: 0 2px 8px #253a2410;
+}
+@media (max-width: 700px) {
+  .map-loading {
+    left: 10px;
+    bottom: 65px;
+    font-size: 9px;
+    padding: 8px;
+  }
+}

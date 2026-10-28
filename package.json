@@ -16,7 +16,8 @@
     "test:browser": "node scripts/browser-smoke.mjs",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "test:postgres": "node scripts/test-postgres.mjs"
+    "test:postgres": "node scripts/test-postgres.mjs",
+    "test:map-scale": "node scripts/test-large-map.mjs"
   },
   "dependencies": {
     "@fontsource/dm-sans": "^5.3.0",

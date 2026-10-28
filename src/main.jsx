@@ -570,6 +570,7 @@ function MapView({ accounts, selected, onSelect, streetAvailable = false }) {
     markers = useRef(new Map()),
     [fitTick, setFitTick] = useState(0),
     [tileError, setTileError] = useState(false),
+    [pinProgress, setPinProgress] = useState({ loaded: 0, total: 0 }),
     [background, setBackground] = useState("overview"),
     backgroundMode = useRef("overview");
   useEffect(() => {
@@ -633,7 +634,8 @@ function MapView({ accounts, selected, onSelect, streetAvailable = false }) {
       .catch(() => setTileError(true));
     L.control.zoom({ position: "bottomright" }).addTo(map.current);
     cluster.current = L.markerClusterGroup({
-      chunkedLoading: true,
+      chunkedLoading: false,
+      animate: false,
       showCoverageOnHover: false,
       maxClusterRadius: 45,
     });
@@ -729,43 +731,78 @@ function MapView({ accounts, selected, onSelect, streetAvailable = false }) {
     };
   }, [background, streetAvailable]);
   useEffect(() => {
-    cluster.current.clearLayers();
+    const group = cluster.current;
+    group.clearLayers();
     markers.current.clear();
-    const pins = accounts.map((a) => {
-      const color =
-        a.status === "Customer"
-          ? "#14796f"
-          : a.status === "Prospect"
-            ? "#ed8851"
-            : "#77868b";
-      const icon = L.divIcon({
-        className: "account-marker",
-        html: `<span style="--pin-color:${color}"><svg viewBox="0 0 24 24" width="17" height="17" fill="white"><path d="M4 21V3h12v5h4v13h-7v-5h-2v5H4zm3-14h2V5H7v2zm5 0h2V5h-2v2zm-5 4h2V9H7v2zm5 0h2V9h-2v2zm-5 4h2v-2H7v2zm9-3h2v-2h-2v2zm0 4h2v-2h-2v2z"/></svg></span>`,
-        iconSize: [34, 42],
-        iconAnchor: [17, 40],
-      });
-      const marker = L.marker([a.latitude, a.longitude], {
-        icon,
-        alt: a.company,
-      });
-      const tooltip = document.createElement("div");
-      tooltip.textContent = a.company;
-      marker.bindTooltip(tooltip);
-      marker.on("click", () => onSelect(a.id));
-      markers.current.set(a.id, marker);
-      return marker;
-    });
-    cluster.current.addLayers(pins);
-    if (pins.length)
-      map.current.fitBounds(cluster.current.getBounds(), {
+    let cancelled = false,
+      timer;
+    let offset = 0;
+    const icons = new Map();
+    setPinProgress({ loaded: 0, total: accounts.length });
+    const addBatch = () => {
+      if (cancelled || !map.current) return;
+      const pins = [];
+      const end = Math.min(offset + 200, accounts.length);
+      for (; offset < end; offset++) {
+        const a = accounts[offset];
+        const color =
+          a.status === "Customer"
+            ? "#14796f"
+            : a.status === "Prospect"
+              ? "#ed8851"
+              : "#77868b";
+        if (!icons.has(color))
+          icons.set(
+            color,
+            L.divIcon({
+              className: "account-marker",
+              html: `<span style="--pin-color:${color}"><svg viewBox="0 0 24 24" width="17" height="17" fill="white"><path d="M4 21V3h12v5h4v13h-7v-5h-2v5H4zm3-14h2V5H7v2zm5 0h2V5h-2v2zm-5 4h2V9H7v2zm5 0h2V9h-2v2zm-5 4h2v-2H7v2zm9-3h2v-2h-2v2zm0 4h2v-2h-2v2z"/></svg></span>`,
+              iconSize: [34, 42],
+              iconAnchor: [17, 40],
+            }),
+          );
+        const marker = L.marker([a.latitude, a.longitude], {
+          icon: icons.get(color),
+          alt: a.company,
+        });
+        marker.bindTooltip(() => {
+          const element = document.createElement("div");
+          element.textContent = a.company;
+          return element;
+        });
+        marker.on("click", () => onSelect(a.id));
+        markers.current.set(a.id, marker);
+        pins.push(marker);
+      }
+      if (cancelled) return;
+      group.addLayers(pins);
+      setPinProgress({ loaded: offset, total: accounts.length });
+      if (offset < accounts.length) timer = setTimeout(addBatch, 16);
+    };
+    if (accounts.length) timer = setTimeout(addBatch, 0);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [accounts, onSelect]);
+  useEffect(() => {
+    if (!map.current || !accounts.length) return;
+    // Cluster bounds are incomplete while pins are still loading. Derive the
+    // viewport directly from coordinates so it never depends on chunk timing.
+    const bounds = L.latLngBounds(
+      accounts.map((a) => [a.latitude, a.longitude]),
+    );
+    if (bounds.isValid())
+      map.current.fitBounds(bounds, {
         padding: [65, 100],
         maxZoom: backgroundMode.current === "street" ? 12 : 6,
+        animate: false,
       });
-  }, [accounts, onSelect, fitTick]);
+  }, [accounts, fitTick]);
   useEffect(() => {
     if (selected?.latitude !== null && selected?.latitude !== undefined) {
       const marker = markers.current.get(selected.id);
-      if (marker) {
+      if (map.current) {
         map.current.setView(
           [selected.latitude, selected.longitude],
           backgroundMode.current === "street" ? 15 : 6,
@@ -773,13 +810,20 @@ function MapView({ accounts, selected, onSelect, streetAvailable = false }) {
             animate: false,
           },
         );
-        if (map.current.hasLayer(marker)) marker.openTooltip();
+        if (marker && map.current.hasLayer(marker)) marker.openTooltip();
       }
     }
   }, [selected]);
   return (
     <>
       <div ref={ref} className="map-canvas" />
+      {pinProgress.loaded < pinProgress.total && (
+        <div className="map-loading" role="status">
+          <LoaderCircle className="spin" size={14} />
+          Loading account pins… {number(pinProgress.loaded)} /{" "}
+          {number(pinProgress.total)}
+        </div>
+      )}
       <div className="background-control" aria-label="Map background">
         <button
           className={background === "overview" ? "active" : ""}
